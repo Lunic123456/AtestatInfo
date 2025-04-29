@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta/>
+  <title>Pomodoro Timer</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { margin: 0; height: 100vh; display: flex; justify-content: center; align-items: center;
+      background: linear-gradient(135deg, #FF6B6B, #556270); font-family: 'Segoe UI', sans-serif;
+      overflow: hidden; color: #fff; }
+    .container { background: rgba(255,255,255,0.2); backdrop-filter: blur(10px);
+      padding: 2.5rem 3rem; border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+      text-align: center; max-width: 360px; width: 100%; }
+    .tabs { display: flex; justify-content: space-between; margin-bottom: 1rem; }
+    .tab { flex: 1; padding: 0.6rem 0; margin: 0 0.2rem;
+      background: rgba(255,255,255,0.3); border-radius: 8px; cursor: pointer;
+      transition: transform 0.2s ease, background 0.3s ease; user-select: none; }
+    .tab:hover { transform: scale(1.05); background: rgba(255,255,255,0.5); }
+    .tab.active { background: rgba(255,255,255,0.8); color: #333; }
+    #timer-display { font-size: 4rem; margin: 1rem 0; transition: color 0.3s ease; }
+    .controls button { background: rgba(255,255,255,0.3); border: none; color: #fff;
+      padding: 0.6rem 1.2rem; margin: 0 0.4rem; font-size: 1rem; border-radius: 8px;
+      cursor: pointer; transition: transform 0.2s ease, background 0.3s ease; }
+    .controls button:hover { transform: scale(1.1); background: rgba(255,255,255,0.5); }
+    .controls button:active { animation: pop 0.15s forwards; }
+    @keyframes pop { 0% { transform: scale(1.1); } 50% { transform: scale(0.9); } 100% { transform: scale(1.0); } }
+    #session-count { margin-top: 1.2rem; font-size: 1.1rem; }
+    #history-chart { margin-top: 1.5rem; background: rgba(255,255,255,0.2);
+      border-radius: 8px; padding: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Pomodoro Timer</h1>
+    <div class="tabs">
+      <div class="tab" data-mode="work">Pomodoro</div>
+      <div class="tab" data-mode="shortBreak">Pauză scurtă</div>
+      <div class="tab" data-mode="longBreak">Pauză lungă</div>
+    </div>
+    <div id="timer-display">25:00</div>
+    <div class="controls">
+      <button id="start-btn">Start</button>
+      <button id="pause-btn">Pauză</button>
+      <button id="reset-btn">Reset</button>
+    </div>
+    <div id="session-count">Sesiuni azi: <span id="count">0</span></div>
+    <canvas id="history-chart" width="360" height="180"></canvas>
+  </div>
+  <script>
+    const WORK_MIN = 25, SHORT_BREAK_MIN = 5, LONG_BREAK_MIN = 15;
+    const TABS = {
+      work: WORK_MIN * 60,
+      shortBreak: SHORT_BREAK_MIN * 60,
+      longBreak: LONG_BREAK_MIN * 60
+    };
+
+    let mode = 'work';
+    let totalSeconds = TABS[mode];
+    let timerInterval = null;
+    let isRunning = false;
+    let completedWork = 0;
+
+    const tabs        = document.querySelectorAll('.tab');
+    const displayEl   = document.getElementById('timer-display');
+    const startBtn    = document.getElementById('start-btn');
+    const pauseBtn    = document.getElementById('pause-btn');
+    const resetBtn    = document.getElementById('reset-btn');
+    const countEl     = document.getElementById('count');
+    const chartCanvas = document.getElementById('history-chart');
+
+    function formatTime(sec) {
+      const m = String(Math.floor(sec / 60)).padStart(2, '0');
+      const s = String(sec % 60).padStart(2, '0');
+      return `${m}:${s}`;
+    }
+    function updateDisplay() {
+      displayEl.textContent = formatTime(totalSeconds);
+      document.body.dataset.mode = mode;
+    }
+    function loadCount() {
+      const today = new Date().toISOString().slice(0,10);
+      const data = JSON.parse(localStorage.getItem('pomodoro')||'{}');
+      return data[today]||0;
+    }
+    function saveCount(cnt) {
+      const today = new Date().toISOString().slice(0,10);
+      const data = JSON.parse(localStorage.getItem('pomodoro')||'{}');
+      data[today]=cnt;
+      localStorage.setItem('pomodoro', JSON.stringify(data));
+    }
+    function renderChart() {
+      const data = JSON.parse(localStorage.getItem('pomodoro')||'{}');
+      const labels = [], values = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(Date.now() - i * 86400000).toISOString().slice(0,10);
+        labels.push(d.slice(5));
+        values.push(data[d]||0);
+      }
+      new Chart(chartCanvas, {
+        type: 'bar',
+        data: { labels, datasets: [{ label: 'Sesiuni', data: values }] },
+        options: { responsive: true }
+      });
+    }
+
+    const saved = JSON.parse(localStorage.getItem('pomodoroState')||'null');
+    if (saved) {
+      mode = saved.mode;
+      totalSeconds = saved.totalSeconds;
+    }
+
+    tabs.forEach(t => { if (t.dataset.mode === mode) t.classList.add('active'); });
+    
+    function saveState() {
+      localStorage.setItem('pomodoroState', JSON.stringify({ mode, totalSeconds }));
+    }
+    window.addEventListener('beforeunload', saveState);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) saveState();
+    });
+
+    tabs.forEach(tab => tab.addEventListener('click', () => {
+      tabs.forEach(t=>t.classList.remove('active'));
+      tab.classList.add('active');
+      mode = tab.dataset.mode;
+      totalSeconds = TABS[mode];
+      clearInterval(timerInterval);
+      isRunning = false;
+      updateDisplay();
+      saveState();
+    }));
+
+    function onSessionComplete() {
+      clearInterval(timerInterval);
+      isRunning = false;
+      if (mode === 'work') {
+        completedWork++;
+        let c = loadCount() + 1;
+        saveCount(c);
+        countEl.textContent = c;
+        renderChart();
+      }
+    }
+    function startTimer() {
+      if (isRunning) return;
+      isRunning = true;
+      timerInterval = setInterval(() => {
+        totalSeconds--;
+        updateDisplay();
+        if (totalSeconds < 0) onSessionComplete();
+      }, 1000);
+    }
+    startBtn.onclick = startTimer;
+    pauseBtn.onclick = () => { clearInterval(timerInterval); isRunning = false; saveState(); };
+    resetBtn.onclick = () => {
+      clearInterval(timerInterval);
+      isRunning = false;
+      totalSeconds = TABS[mode];
+      updateDisplay();
+      saveState();
+    };
+
+    countEl.textContent = loadCount();
+    updateDisplay();
+    renderChart();
+  </script>
+</body>
+</html>
